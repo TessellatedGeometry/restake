@@ -196,10 +196,10 @@ export class Autostake {
         console.log(`Error: ${e}`)
         await new Promise(r => setTimeout(r, (Math.random() * 31) * 1000));
       }
-
-      client.health.error("Failed to get delegations")
-      return []
     }
+
+    client.health.error("Failed to get delegations")
+    return []
   }
 
   async getGrantedAddresses(client, addresses) {
