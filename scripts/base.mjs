@@ -185,6 +185,7 @@ export class Autostake {
     const tries = 10
     for (let i = 0; i < tries; i++) {
       try {
+        console.log(`Attempting try ${i + 1}`)
         return await client.queryClient.getAllValidatorDelegations(client.operator.address, batchSize, async (pages) => {
           timeStamp("...batch", pages.length)
 
@@ -235,6 +236,7 @@ export class Autostake {
     const tries = 10
     for (let i = 0; i < tries; i++) {
       try {
+        console.log(`Attempting try ${i + 1}`)
         const result = await client.queryClient.getGrants(botAddress, delegatorAddress, { timeout })
         return this.parseGrantResponse(result, botAddress, delegatorAddress, address)
       } catch (e) {
