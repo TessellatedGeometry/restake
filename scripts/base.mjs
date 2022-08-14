@@ -204,6 +204,8 @@ export class Autostake {
 
   async getGrantedAddresses(client, addresses) {
     const { botAddress, address } = client.operator
+    console.log(`FYI: The bot address is ${botAddress} and the operator address is ${address}`)
+
     let allGrants
     try {
       allGrants = await client.queryClient.getGranteeGrants(botAddress)
