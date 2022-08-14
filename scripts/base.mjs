@@ -179,7 +179,7 @@ export class Autostake {
       )
   }
 
-  getDelegations(client) {
+  async getDelegations(client) {
     let batchSize = client.network.data.autostake?.batchQueries || 100
 
     const tries = 10
@@ -225,7 +225,7 @@ export class Autostake {
     return _.compact(grantedAddresses.flat())
   }
 
-  getGrants(client, delegatorAddress) {
+  async getGrants(client, delegatorAddress) {
     const { botAddress, address } = client.operator
     let timeout = client.network.data.autostake?.delegatorTimeout || 5000
 
