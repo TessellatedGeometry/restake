@@ -19,6 +19,12 @@ import EthSigner from '../src/utils/EthSigner.mjs';
 
 import 'dotenv/config'
 
+// Time to wait on an error
+const ERROR_DELAY = 1
+
+// Time to wait to not slam nodes
+const CONSECUTIVE_REQUEST_DELAY = 1
+
 /**
  * Wait for the given number of seconds before continuing.
  * 
@@ -44,6 +50,22 @@ export class Autostake {
     for(const name of networkNames){
       if (name && !networks.map(el => el.name).includes(name)) return timeStamp('Invalid network name:', name)
     }
+
+    // for (let i = 0; i < networks.length; i++) {
+    //   const network = networks[i]
+
+    //   if (networkNames && networkNames.length && !networkNames.includes(data.name)) {        
+    //     timeStamp(`FYI: Ignoring ${data.name}`)
+    //     return
+    //   }
+
+    //   const health = new AutostakeHealth(data.healthCheck, { dryRun: this.opts.dryRun })
+    //   health.started('⚛')
+
+    //   let client = undefined
+    //   while (client === undefined)
+    // }
+
     const calls = networks.map(data => {
       return async () => {
         if(networkNames && networkNames.length && !networkNames.includes(data.name)) return
@@ -64,11 +86,11 @@ export class Autostake {
 
         timeStamp('Using REST URL', restUrl)
 
-        if(usingDirectory){
-          timeStamp('You are using public nodes, script may fail with many delegations. Check the README to use your own')
-          timeStamp('Delaying briefly to reduce load...')
-          await new Promise(r => setTimeout(r, (Math.random() * 31) * 1000));
-        }
+        // if(usingDirectory){
+        //   timeStamp('You are using public nodes, script may fail with many delegations. Check the README to use your own')
+        //   timeStamp('Delaying briefly to reduce load...')
+        //   await new Promise(r => setTimeout(r, (Math.random() * 31) * 1000));
+        // }
 
         try {
           await this.runNetwork(client)
@@ -90,8 +112,8 @@ export class Autostake {
       try {
         balance = await this.checkBalance(client)
       } catch (e) {
-        console.log(`Error getting balance: ${e}`)
-        await sleep(15)
+        timeStamp(`Error getting balance: ${e}`)
+        await sleep(ERROR_DELAY)
       }
     }
     if (!balance || smaller(balance, 1_000)) {
@@ -104,8 +126,8 @@ export class Autostake {
       try {
         delegations = await this.getDelegations(client)
       } catch (e) {
-        console.log(`Error getting delegations: ${e}`)
-        await sleep(15)
+        timeStamp(`Error getting delegations: ${e}`)
+        await sleep(ERROR_DELAY)
       }
     }
 
@@ -125,8 +147,8 @@ export class Autostake {
       try {
         grantedAddresses = await this.getGrantedAddresses(client, addresses)
       } catch (e) {
-        console.log(`Error getting granted addresses: ${e}`)
-        await sleep(15)
+        timeStamp(`Error getting granted addresses: ${e}`)
+        await sleep(ERROR_DELAY)
       }
     }
     timeStamp("Found", grantedAddresses.length, "delegators with valid grants...")
@@ -156,6 +178,7 @@ export class Autostake {
     }
 
     const operator = network.getOperatorByBotAddress(botAddress)
+
     if (!operator) return timeStamp('Not an operator')
 
     if (!network.authzSupport) return timeStamp('No Authz support')
@@ -205,64 +228,79 @@ export class Autostake {
     return { signer, slip44 }
   }
 
-  checkBalance(client) {
-    return client.queryClient.getBalance(client.operator.botAddress, client.network.denom)
-      .then(
-        (balance) => {
-          timeStamp("Bot balance is", balance.amount, balance.denom)
-          return balance.amount
-        },
-        (error) => {
-          client.health.error("Failed to get balance:", error.message || error)
-        }
-      )
+  async checkBalance(client) {
+    const balance = await (client.queryClient.getBalance(client.operator.botAddress, client.network.denom))
+    timeStamp("Bot balance is", balance.amount, balance.denom)
+    return balance.amount
   }
 
-  getDelegations(client) {
+  async getDelegations(client) {
     let batchSize = client.network.data.autostake?.batchQueries || 100
-    return client.queryClient.getAllValidatorDelegations(client.operator.address, batchSize, (pages) => {
+
+    return await client.queryClient.getAllValidatorDelegations(client.operator.address, batchSize, (pages) => {
       timeStamp("...batch", pages.length)
-    }).catch(error => {
-      client.health.error("Failed to get delegations:", error.message || error)
-      return []
     })
   }
 
   async getGrantedAddresses(client, addresses) {
     const { botAddress, address } = client.operator
-    let allGrants
-    try {
-      allGrants = await client.queryClient.getGranteeGrants(botAddress)
-    } catch (e) {  }
-    let grantCalls = addresses.map(item => {
-      return async () => {
-        if(allGrants) return this.parseGrantResponse(allGrants, botAddress, item, address)
-        try {
-          return await this.getGrants(client, item)
-        } catch (error) {
-          client.health.error(item, 'Failed to get grants', error.message)
-        }
-      }
-    })
-    let batchSize = client.network.data.autostake?.batchQueries || 50
-    let grantedAddresses = await mapSync(grantCalls, batchSize, (batch, index) => {
-      timeStamp('...batch', index + 1)
-    })
-    return _.compact(grantedAddresses.flat())
+    
+    // Parse through each address
+    const results = []
+    for (let i = 0; i < addresses.length; i++) {
+      const address = addresses[i]
+      timeStamp(`[${i+1}/${addresses.length}] Examining ${address}`)
+
+      try {
+        const grants = await this.getGrants(client, address)
+        results.push(grants)
+
+        // Nicely give the node some breathing room
+        await sleep(CONSECUTIVE_REQUEST_DELAY)
+      } catch (e) {
+        timeStamp(`Error getting grants for ${address}: ${e}`)
+        await sleep(ERROR_DELAY)
+
+        // retry 
+        i--
+      }     
+    }
+    timeStamp(`Got ${results.length} results...`)
+
+    // Compact grants
+    const compacted = _.compact(results)
+    timeStamp(`Compacted to ${compacted.length}`)
+
+    return compacted
+
+
+    
+    // let allGrants
+    // try {
+    //   allGrants = await client.queryClient.getGranteeGrants(botAddress)
+    // } catch (e) {  }
+    // let grantCalls = addresses.map(item => {
+    //   return async () => {
+    //     if(allGrants) return this.parseGrantResponse(allGrants, botAddress, item, address)
+    //     try {
+    //       return await this.getGrants(client, item)
+    //     } catch (error) {
+    //       client.health.error(item, 'Failed to get grants', error.message)
+    //     }
+    //   }
+    // })
+    // let batchSize = client.network.data.autostake?.batchQueries || 50
+    // let grantedAddresses = await mapSync(grantCalls, batchSize, (batch, index) => {
+    //   timeStamp('...batch', index + 1)
+    // })
+    // return _.compact(grantedAddresses.flat())
   }
 
-  getGrants(client, delegatorAddress) {
+  async getGrants(client, delegatorAddress) {
     const { botAddress, address } = client.operator
     let timeout = client.network.data.autostake?.delegatorTimeout || 5000
-    return client.queryClient.getGrants(botAddress, delegatorAddress, { timeout })
-      .then(
-        (result) => {
-          return this.parseGrantResponse(result, botAddress, delegatorAddress, address)
-        },
-        (error) => {
-          client.health.error(delegatorAddress, "ERROR skipping this run:", error.message || error)
-        }
-      )
+    const result = await client.queryClient.getGrants(botAddress, delegatorAddress, { timeout })
+    return this.parseGrantResponse(result, botAddress, delegatorAddress, address)
   }
 
   parseGrantResponse(grants, botAddress, delegatorAddress, validatorAddress){
@@ -272,11 +310,11 @@ export class Autostake {
       if (result.stakeGrant.authorization['@type'] === "/cosmos.authz.v1beta1.GenericAuthorization") {
         timeStamp(delegatorAddress, "Using GenericAuthorization, allowed")
         grantValidators = [validatorAddress];
-      }else{
+      } else {
         grantValidators = result.stakeGrant.authorization.allow_list.address
         if (!grantValidators.includes(validatorAddress)) {
           timeStamp(delegatorAddress, "Not autostaking for this validator, skipping")
-          return
+          return undefined
         }
         maxTokens = result.stakeGrant.authorization.max_tokens
       }
@@ -307,10 +345,11 @@ export class Autostake {
 
     let autostakeAmount = floor(totalRewards)
 
-    if (smaller(bignumber(autostakeAmount), bignumber(client.operator.minimumReward))) {
-      timeStamp(address, autostakeAmount, client.network.denom, 'reward is too low, skipping')
-      return undefined
-    }
+    // We'll take any amount of reward, for now.
+    // if (smaller(bignumber(autostakeAmount), bignumber(client.operator.minimumReward))) {
+    //   timeStamp(address, autostakeAmount, client.network.denom, 'reward is too low, skipping')
+    //   return undefined
+    // }
 
     if (grant.maxTokens){
       if(smallerEq(grant.maxTokens, 0)) {
@@ -337,33 +376,33 @@ export class Autostake {
     const messages = []
     for (let i = 0; i < grantedAddresses.length; i++) {
       const grantedAddress = grantedAddresses[i]
-      console.log(`[${i+1}/${grantedAddress.length}] Attempting to generate a message for address ${grantedAddress}`)
+      timeStamp(`[${i+1}/${grantedAddress.length}] Attempting to generate a message for address ${grantedAddress}`)
 
       try {
         const message = await this.getAutostakeMessage(client, grantedAddress)
         messages.push(message)
+
+        // Nicely pause for a second to not slam nodes too hard.
+        await sleep(CONSECUTIVE_REQUEST_DELAY)        
       } catch (e) {
-        console.log(`Caught error trying to get message: ${e}`)
-        await sleep(15)
+        timeStamp(`Caught error trying to get message: ${e}`)
+        await sleep(ERROR_DELAY)
 
         // Retry
         i--
       }
-
-      // Nicely pause for a second to not slam nodes too hard.
-      await sleep(1)
     }
-    console.log(`Got ${messages.length} messages`)
+    timeStamp(`Got ${messages.length} messages`)
 
     // Filter out undefined messages
-    const validMessagess = messages.filter((message) => { 
+    const validMessages = messages.filter((message) => { 
       return message !== undefined
     })
-    console.log(`Got ${validMessages.length} valid messages`)
+    timeStamp(`Got ${validMessages.length} valid messages`)
 
     // Chunk messages into batches..
     const batches = _.chunk(validMessages, batchSize)
-    console.log(`Will send ${batches.length} batches`)
+    timeStamp(`Will send ${batches.length} batches`)
 
     // Send messages in each batch
     for (let i = 0; i < batches.length; i++) {
@@ -371,10 +410,10 @@ export class Autostake {
 
       try {
         await this.sendMessages(client, batch)
-        console.log(`Sent batch ${i+1}`)
+        timeStamp(`Sent batch ${i+1}`)
       } catch (e) {
-        console.log(`Error sending batch ${i+1}: ${e}`)
-        await sleep(15)
+        timeStamp(`Error sending batch ${i+1}: ${e}`)
+        await sleep(ERROR_DELAY)
 
         // Retry
         i--
@@ -414,7 +453,7 @@ export class Autostake {
       return { message }
     } else {
       const response = await client.signingClient.signAndBroadcast(client.operator.botAddress, [execMsg], gas, memo)
-      console.log(`Sent in ${response.transactionHash}`)
+      timeStamp(`Sent in ${response.transactionHash}`)
     }
   }
 
@@ -439,24 +478,18 @@ export class Autostake {
     }]
   }
 
-  totalRewards(client, address) {
+  async totalRewards(client, address) {
     let timeout = client.network.data.autostake?.delegatorTimeout || 5000
-    return client.queryClient.getRewards(address, { timeout })
-      .then(
-        (rewards) => {
-          const total = Object.values(rewards).reduce((sum, item) => {
-            const reward = item.reward.find(el => el.denom === client.network.denom)
-            if (reward && item.validator_address === client.operator.address) {
-              return add(sum, bignumber(reward.amount))
-            }
-            return sum
-          }, 0)
-          return total
-        },
-        (error) => {
-          timeStamp(address, "ERROR skipping this run:", error.message || error)
-        }
-      )
+    const rewards = await client.queryClient.getRewards(address, { timeout })
+
+    const total = Object.values(rewards).reduce((sum, item) => {
+      const reward = item.reward.find(el => el.denom === client.network.denom)
+      if (reward && item.validator_address === client.operator.address) {
+        return add(sum, bignumber(reward.amount))
+      }
+      return sum
+    }, 0)
+    return total
   }
 
   getNetworksData() {
