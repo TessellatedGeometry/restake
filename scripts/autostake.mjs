@@ -1,7 +1,7 @@
 import child_process from 'child_process'
 
 /** Amount of time to sleep between runs */
-const RUN_DELAY = 2 * 60 // 20 min
+const RUN_DELAY = 15 * 60 // 20 min
 
 /**
  * Wait for the given number of seconds before continuing.
