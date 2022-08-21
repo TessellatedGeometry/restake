@@ -19,6 +19,16 @@ import EthSigner from '../src/utils/EthSigner.mjs';
 
 import 'dotenv/config'
 
+/**
+ * Wait for the given number of seconds before continuing.
+ * 
+ * @param seconds The number of seconds to wait.
+ */
+ const sleep = async (seconds) => {
+  const milliseconds = seconds * 1000
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
 export class Autostake {
   constructor(opts){
     this.opts = opts || {}
@@ -73,23 +83,52 @@ export class Autostake {
   async runNetwork(client){
     timeStamp('Running autostake')
     const { network, health } = client 
-    const balance = await this.checkBalance(client)
+
+    // Retry...
+    let balance = undefined
+    while (balance === undefined) {
+      try {
+        balance = await this.checkBalance(client)
+      } catch (e) {
+        console.log(`Error getting balance: ${e}`)
+        await sleep(15)
+      }
+    }
     if (!balance || smaller(balance, 1_000)) {
       return health.failed('Bot balance is too low')
     }
 
     timeStamp('Finding delegators...')
-    const addresses = await this.getDelegations(client).then(delegations => {
-      return delegations.map(delegation => {
-        if (delegation.balance.amount === 0) return
+    let delegations = undefined
+    while (delegations === undefined) {
+      try {
+        delegations = await this.getDelegations(client)
+      } catch (e) {
+        console.log(`Error getting delegations: ${e}`)
+        await sleep(15)
+      }
+    }
 
-        return delegation.delegation.delegator_address
-      })
+    // Filter all nonzero delegations
+    const nonZeroDelegations = delegations.filter((delegation) => {
+      return delegation.balance.amount !== 0
     })
 
+    // Map delegations to addresses
+    const addresses = nonZeroDelegations.map((delegation) => {
+      return delegation.delegation.delegator_address
+    })
+  
     timeStamp("Checking", addresses.length, "delegators for grants...")
-    let grantedAddresses = await this.getGrantedAddresses(client, addresses)
-
+    let grantedAddresses = undefined
+    while (grantedAddresses === undefined) {
+      try {
+        grantedAddresses = await this.getGrantedAddresses(client, addresses)
+      } catch (e) {
+        console.log(`Error getting granted addresses: ${e}`)
+        await sleep(15)
+      }
+    }
     timeStamp("Found", grantedAddresses.length, "delegators with valid grants...")
 
     await this.autostake(client, grantedAddresses)
@@ -257,24 +296,26 @@ export class Autostake {
     const withdrawAddress = await client.queryClient.getWithdrawAddress(address, { timeout })
     if(withdrawAddress && withdrawAddress !== address){
       timeStamp(address, 'has a different withdraw address:', withdrawAddress)
-      return
+      return undefined
     }
 
     const totalRewards = await this.totalRewards(client, address)
 
-    if(totalRewards === undefined) return
+    if(totalRewards === undefined) {
+      return undefined
+    }
 
     let autostakeAmount = floor(totalRewards)
 
     if (smaller(bignumber(autostakeAmount), bignumber(client.operator.minimumReward))) {
       timeStamp(address, autostakeAmount, client.network.denom, 'reward is too low, skipping')
-      return
+      return undefined
     }
 
     if (grant.maxTokens){
       if(smallerEq(grant.maxTokens, 0)) {
         timeStamp(address, grant.maxTokens, client.network.denom, 'grant balance is empty, skipping')
-        return
+        return undefined
       }
       if(smaller(grant.maxTokens, autostakeAmount)) {
         autostakeAmount = grant.maxTokens
@@ -292,33 +333,53 @@ export class Autostake {
     let batchSize = network.data.autostake?.batchTxs || 50
     timeStamp('Calculating and autostaking in batches of', batchSize)
 
-    this.batch = []
-    this.messages = []
-    this.processed = {}
+    // Parse each granted address into a message. A message is either a json object, or undefined.
+    const messages = []
+    for (let i = 0; i < grantedAddresses.length; i++) {
+      const grantedAddress = grantedAddresses[i]
+      console.log(`[${i+1}/${grantedAddress.length}] Attempting to generate a message for address ${grantedAddress}`)
 
-    const calls = grantedAddresses.map((item, index) => {
-      return async () => {
-        let messages
-        try {
-          messages = await this.getAutostakeMessage(client, item)
-        } catch (error) {
-          health.error(item.address, 'Failed to get autostake message', error.message)
-        }
-        this.processed[item.address] = true
+      try {
+        const message = await this.getAutostakeMessage(client, grantedAddress)
+        messages.push(message)
+      } catch (e) {
+        console.log(`Caught error trying to get message: ${e}`)
+        await sleep(15)
 
-        await this.sendInBatches(client, messages, batchSize, grantedAddresses.length)
+        // Retry
+        i--
       }
-    })
-    let querySize = network.data.autostake?.batchQueries || _.clamp(batchSize, 50)
-    await executeSync(calls, querySize)
 
-    const results = await Promise.all(this.messages)
-    const errors = results.filter(result => result.error)
-    timeStamp(`${network.prettyName} summary:`);
-    for (let [index, result] of results.entries()) {
-      timeStamp(`TX ${index + 1}:`, result.message);
+      // Nicely pause for a second to not slam nodes too hard.
+      await sleep(1)
     }
-    health.complete(`${network.prettyName} finished: Sent ${results.length - errors.length}/${results.length} messages`)
+    console.log(`Got ${messages.length} messages`)
+
+    // Filter out undefined messages
+    const validMessagess = messages.filter((message) => { 
+      return message !== undefined
+    })
+    console.log(`Got ${validMessages.length} valid messages`)
+
+    // Chunk messages into batches..
+    const batches = _.chunk(validMessages, batchSize)
+    console.log(`Will send ${batches.length} batches`)
+
+    // Send messages in each batch
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i]
+
+      try {
+        await this.sendMessages(client, batch)
+        console.log(`Sent batch ${i+1}`)
+      } catch (e) {
+        console.log(`Error sending batch ${i+1}: ${e}`)
+        await sleep(15)
+
+        // Retry
+        i--
+      }
+    }
   }
 
   async sendInBatches(client, messages, batchSize, total){
@@ -343,30 +404,17 @@ export class Autostake {
   }
 
   async sendMessages(client, messages){
-    try {
-      const execMsg = this.buildExecMessage(client.operator.botAddress, messages)
-      const memo = 'REStaked by ' + client.operator.moniker
-      const gasModifier = client.network.data.autostake?.gasModifier || 1.1
-      const gas = await client.signingClient.simulate(client.operator.botAddress, [execMsg], memo, gasModifier);
-      if (this.opts.dryRun) {
-        const message = `DRYRUN: Would send ${messages.length} TXs using ${gas} gas`
-        timeStamp(message)
-        return { message }
-      } else {
-        return await client.signingClient.signAndBroadcast(client.operator.botAddress, [execMsg], gas, memo).then((response) => {
-          const message = `Sent ${messages.length} messages - ${response.transactionHash}`
-          timeStamp(message)
-          return { message }
-        }, (error) => {
-          const message = `Failed ${messages.length} messages - ${error.message}`
-          client.health.error(message)
-          return { message, error }
-        })
-      }
-    } catch (error) {
-      const message = `Failed ${messages.length} TXs: ${error.message}`
-      client.health.error(message)
-      return { message, error }
+    const execMsg = this.buildExecMessage(client.operator.botAddress, messages)
+    const memo = 'REStaked by ' + client.operator.moniker
+    const gasModifier = client.network.data.autostake?.gasModifier || 1.1
+    const gas = await client.signingClient.simulate(client.operator.botAddress, [execMsg], memo, gasModifier);
+    if (this.opts.dryRun) {
+      const message = `DRYRUN: Would send ${messages.length} TXs using ${gas} gas`
+      timeStamp(message)
+      return { message }
+    } else {
+      const response = await client.signingClient.signAndBroadcast(client.operator.botAddress, [execMsg], gas, memo)
+      console.log(`Sent in ${response.transactionHash}`)
     }
   }
 
