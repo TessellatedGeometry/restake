@@ -4,6 +4,7 @@ scripts/*
 !scripts/base.mjs
 !scripts/checkAuthz.mjs
 !scripts/dryrun.mjs
+!scripts/run-autostake-once.mjs
 
 # dependencies
 /node_modules
