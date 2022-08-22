@@ -69,8 +69,8 @@ export class Autostake {
     for (let i = 0; i < networks.length; i++) {
       const data = networks[i]
 
-      if(networkNames && networkNames.length && !networkNames.includes(data.name)) return
-      if(data.enabled === false) return
+      if(networkNames && networkNames.length && !networkNames.includes(data.name)) continue
+      if(data.enabled === false) continue
 
       let client
       let health = new AutostakeHealth(data.healthCheck, { dryRun: this.opts.dryRun })
