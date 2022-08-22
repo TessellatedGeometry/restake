@@ -25,13 +25,20 @@ const ERROR_DELAY = 1
 // Time to wait to not slam nodes
 const CONSECUTIVE_REQUEST_DELAY = 1
 
+let sleeptime = 1
+
 /**
  * Wait for the given number of seconds before continuing.
  * 
  * @param seconds The number of seconds to wait.
  */
  const sleep = async (seconds) => {
-  const milliseconds = seconds * 1000
+  // Increment sleep time
+  sleepTime *= 1.2
+  timeStamp(`Sleeping for ${sleeptime} seconds...`)
+  
+
+  const milliseconds = sleeptime * 1000
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
