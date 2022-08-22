@@ -33,6 +33,11 @@ let sleeptime = 1
  * @param seconds The number of seconds to wait.
  */
  const sleep = async (seconds) => {
+  const milliseconds = sleeptime * 1000
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+ }
+
+ const errorSleep = async (seconds) => {
   // Increment sleep time
   sleeptime *= 1.2
   timeStamp(`Sleeping for ${sleeptime} seconds...`)
@@ -120,7 +125,7 @@ export class Autostake {
         balance = await this.checkBalance(client)
       } catch (e) {
         timeStamp(`Error getting balance: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
       }
     }
     if (!balance || smaller(balance, 1_000)) {
@@ -134,7 +139,7 @@ export class Autostake {
         delegations = await this.getDelegations(client)
       } catch (e) {
         timeStamp(`Error getting delegations: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
       }
     }
 
@@ -155,7 +160,7 @@ export class Autostake {
         grantedAddresses = await this.getGrantedAddresses(client, addresses)
       } catch (e) {
         timeStamp(`Error getting granted addresses: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
       }
     }
     timeStamp("Found", grantedAddresses.length, "delegators with valid grants...")
@@ -266,7 +271,7 @@ export class Autostake {
         await sleep(CONSECUTIVE_REQUEST_DELAY)
       } catch (e) {
         timeStamp(`Error getting grants for ${address}: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
 
         // retry 
         i--
@@ -393,7 +398,7 @@ export class Autostake {
         await sleep(CONSECUTIVE_REQUEST_DELAY)        
       } catch (e) {
         timeStamp(`Caught error trying to get message: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
 
         // Retry
         i--
@@ -420,7 +425,7 @@ export class Autostake {
         timeStamp(`Sent batch ${i+1}`)
       } catch (e) {
         timeStamp(`Error sending batch ${i+1}: ${e}`)
-        await sleep(ERROR_DELAY)
+        await errorSleep(ERROR_DELAY)
 
         // Retry
         i--
