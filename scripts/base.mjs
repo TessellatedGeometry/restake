@@ -34,7 +34,7 @@ let sleeptime = 1
  */
  const sleep = async (seconds) => {
   // Increment sleep time
-  sleepTime *= 1.2
+  sleeptime *= 1.2
   timeStamp(`Sleeping for ${sleeptime} seconds...`)
   
 
