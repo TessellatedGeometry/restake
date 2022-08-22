@@ -66,25 +66,26 @@ export class Autostake {
     //   while (client === undefined)
     // }
 
-    const calls = networks.map(data => {
-      return async () => {
-        if(networkNames && networkNames.length && !networkNames.includes(data.name)) return
-        if(data.enabled === false) return
+    for (let i = 0; i < networks.length; i++) {
+      const data = networks[i]
 
-        let client
-        let health = new AutostakeHealth(data.healthCheck, { dryRun: this.opts.dryRun })
-        health.started('⚛')
-        try {
-          client = await this.getClient(data, health)
-        } catch (error) {
-          return health.failed('Failed to connect', error.message)
-        }
+      if(networkNames && networkNames.length && !networkNames.includes(data.name)) return
+      if(data.enabled === false) return
 
-        if(!client) return health.success('Skipping')
+      let client
+      let health = new AutostakeHealth(data.healthCheck, { dryRun: this.opts.dryRun })
+      health.started('⚛')
+      try {
+        client = await this.getClient(data, health)
+      } catch (error) {
+        return health.failed('Failed to connect', error.message)
+      }
 
-        const { restUrl, usingDirectory } = client.network
+      if(!client) return health.success('Skipping')
 
-        timeStamp('Using REST URL', restUrl)
+      const { restUrl, usingDirectory } = client.network
+
+      timeStamp('Using REST URL', restUrl)
 
         // if(usingDirectory){
         //   timeStamp('You are using public nodes, script may fail with many delegations. Check the README to use your own')
@@ -92,14 +93,13 @@ export class Autostake {
         //   await new Promise(r => setTimeout(r, (Math.random() * 31) * 1000));
         // }
 
-        try {
-          await this.runNetwork(client)
-        } catch (error) {
-          return health.failed('Autostake failed, skipping network', error.message)
-        }
+      try {
+        await this.runNetwork(client)
+        return health.success(`\nComplete\n`)
+      } catch (error) {
+        return health.failed('Autostake failed, skipping network', error.message)
       }
-    })
-    await executeSync(calls, 1)
+    }
   }
 
   async runNetwork(client){
