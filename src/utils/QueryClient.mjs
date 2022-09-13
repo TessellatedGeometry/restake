@@ -51,6 +51,12 @@ const QueryClient = async (chainId, restUrls) => {
     if (pageSize) searchParams.append("pagination.limit", pageSize);
     if (nextKey) searchParams.append("pagination.key", nextKey);
 
+    console.log(`hitting ${        restUrl +
+      "/cosmos/staking/v1beta1/validators/" +
+      validatorAddress +
+      "/delegations?" +
+      searchParams.toString()}`)
+
     return axios
       .get(
         restUrl +
